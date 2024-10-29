@@ -1,7 +1,6 @@
 use std::env;
 
-//Here I will define the structs for the different people we have
-
+//Here I will define the structs for the different people we hav
 struct Voter {
     name: String,
     date_of_birth: String,
@@ -19,6 +18,7 @@ struct Office {
 
 struct Ballot{
     offices: Vec<Offices>,
+    is_open: bool, //this will help in opening or closisng a ballot
 }
 
 struct vote {
@@ -27,14 +27,25 @@ struct vote {
     //voter can vote for many people
 }
 
+//Main function, lol
 fn main() {
+    
+    //All ballots are closed on starting point
+    let mut ballot = Ballot {
+        offices: Vec::new(),
+        is_open: false,
+    };
+    
     //Here we start the program with the admin bieng able to log in
     if admin_login (){
         loop{
-            println!("Choose 1. Create an election\n2. Register a voter\n3. Exit: ");
+            println!("Choose 1. Create an election\n2. Register a voter\n3. Open election\n4. Close election\n5. Tally votes\n6. Exit ");
             let mut choice = String::new();
             std::io::stdin().read_line(&mut choice).unwrap();
             let choice = choice.trim();
+
+            //To store the registered voters so that we can check if a voter is registered befrpe being ab;e to vote
+            let mut registered_voters: Vec<Voter> = Vec::new();  
 
             match choice{
                 "1" => {
@@ -45,7 +56,10 @@ fn main() {
                     let voter = register_voter();
                     println!("Voter registered successfully!");
                 }
-                "3" =>{
+                "3" => open_election(&mut ballot);
+                "4" => close_election(&mut ballot);
+                "5" => tally_votes(&ballot);
+                "6" =>{
                     println!("Exiting the program...");
                     break;
                 }
@@ -55,6 +69,7 @@ fn main() {
     }
 }
 
+//Admin log in function
 fn admin_login() -> bool {
     let admin_username = "adminname";
     let admin_password = "adminpassword";
@@ -77,7 +92,7 @@ fn admin_login() -> bool {
         println!("Error! Access denied!");
         false
 }
-
+//Creating a ballot. I believe I still need to make some changes here
 fn create_election() -> Ballot{
     let mut offices = Vec::new();
 
@@ -126,24 +141,95 @@ fn create_election() -> Ballot{
     }
     Ballot {offices}
 }
+//Registering a voter
+fn register_voter(registered_voters: &mut Vec<Voter>){
+    let voter = Voter {
+        name: get_input("Enter voter's name:"),
+        date_of_birth: get_input("Enter voter's date of birth (YYYY-MM-DD):"),
+    };
+    registered_voters.push(voter);
+    println!("Voter registered successfully!");
+}
 
-fn register_voter() -> Voter {
-    println!("Enter the name of the voter: ");
-    let mut name = String::new();
-    std::io::stdin().read_line(&mut name).unwrap();
-    let name = name.trim();
+fn get_input(prompt: &str) -> String {
+    println!("{}", prompt);
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).unwrap();
+    input.trim().to_string()
+}
 
-    println!("Enter the date of birth of the voter in the format YYYY-MM-DD: ");
-    let mut dob = String::new();
-    std::io::stdin().read_line(&mut voter_name).unwrap();
-    let voter_name = voter_name.trim();
+//This function will check if the voter is registered
 
-    Voter{
-        name: name,
-        date_of_birth : dob,
+fn is_voter_registered(registered_voters: &Vec<Voter>, name: &str) -> bool{
+    registered_voters.iter().any(|voter| voter.name == name) //I am not sure, but i guess this can used as a backdoor
+}
+
+fn tally_vote(ballot: &Ballot){
+    if ballot.is_open {
+        println!("Election is still open. Please close the election before tallying votes.");
+        return;
+    }
+    println!("---------------- ELECTION RESULTS --------------\n");
+    
+    for office in ballot.offices {
+        println!("Office: {}", office.name);
+        for candidate in office.candidates{
+            println!("{} ({}) - {}", candidate.name, candidate.party, candidate.votes);
+        }
     }
 }
 
+//Open the election
+fn open_ballot (ballot: &mut Ballot){
+    if ballot.is_open {
+        println!("Election is already open");
+    } else{
+        ballot.is_open = true;
+        println!("The election has been opened for voting.");
+    }
+}
+
+//Close the election
+fn close_ballot(ballot: &mut Ballot){
+    if ballot.is_open{
+        ballot.is_open = false;
+        println!("The ballot has been closed. No voting possible!");
+    }else{
+        println!("The election is already close");
+    }
+}
+
+fn cast_vote(registered_voters: &Vec<Voter>, ballot: &mut Ballot){
+    if !ballot.is_open {
+        println!("Sorry, you cannot vote right now as the election is not open for voting!");
+        return;
+    }
+    let voter_name = get_input("Enter your name: ");
+    if !is_voter_registered(registered_voters, &voter_name){
+        println!("Sorry, you are not elligible to vote as you are not a registered voter!");
+        return;
+
+        let mut selected_candidates = Vec::new();
+
+        for office in &mut ballot.offices {
+            println!("Office: {}", office.name);
+            for (i, candidate) in office.candidates.iter().enumerate() {
+                println!("{}. {} ({})", i + 1, candidate.name, candidate.party);
+            }
+            let choice = get_input("Enter the number of your selected candidate:");
+            let choice: usize = choice.trim().parse().unwrap_or(0);
+            if choice > 0 && choice <= office.candidates.len() {
+                selected_candidates.push(office.candidates[choice - 1].name.clone());
+                office.candidates[choice - 1].votes += 1;  // Increment vote for the selected candidate
+            } else {
+                println!("Invalid choice.");
+            }
+        }
+    
+        println!("Thank you, {}! Your vote has been cast.", voter_name);
+    //This code needs refinement and matching with main.
+    //Main should show at first are you admin or voter than display optiosn according to that
+}
 
 
 
