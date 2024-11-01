@@ -130,9 +130,20 @@ fn admin_login() -> bool {
 //===================================================================================================================================
 
 // Admin menu function
+// Admin menu function
 fn admin_menu(conn: &Connection, ballot: &mut Ballot) {
     loop {
-        println!("\t---------Admin Menu------------\n\t1. Create an election\n\t2. Register a voter\n\t3. Open election\n\t4. Close election\n\t5. Tally votes\n\t6. Exit");
+        println!("\t---------Admin Menu------------");
+        println!("\t1. Create an election");
+        println!("\t2. Register a voter");
+        println!("\t3. Open election");
+        println!("\t4. Close election");
+        println!("\t5. Tally votes");
+        println!("\t6. Delete a voter");
+        println!("\t7. Delete a candidate");
+        println!("\t8. Delete an office");
+        println!("\t9. Exit");
+        
         let mut choice = String::new();
         std::io::stdin().read_line(&mut choice).unwrap();
         let choice = choice.trim();
@@ -159,6 +170,7 @@ fn admin_menu(conn: &Connection, ballot: &mut Ballot) {
         }
     }
 }
+
 
 //=============================================================================================================
 
@@ -387,7 +399,4 @@ fn delete_office(conn: &Connection) {
 }
 
 //============================================================================================================================================
-
-
-
 
