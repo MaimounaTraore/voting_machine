@@ -1,6 +1,10 @@
+use rusqlite::{Connection, params};  // Import `params` macro here
 use std::env;
+mod db;
+use db::*;  // Import all functions and structs from db.rs
 
-//Here I will define the structs for the different people we hav
+
+// Here I will define the structs for the different people we have
 struct Voter {
     name: String,
     date_of_birth: String,
@@ -17,62 +21,87 @@ struct Office {
     candidates: Vec<Candidate>,
 }
 
-struct Ballot{
+struct Ballot {
     offices: Vec<Office>,
-    is_open: bool, //this will help in opening or closisng a ballot
+    is_open: bool, // this will help in opening or closing a ballot
 }
 
 struct Vote {
     voter_name: String,
-    selected_candidates: Vec<String> //Here I am not sure if it should be string or a vector meaning if the
-    //voter can vote for many people
+    selected_candidates: Vec<String>, // Here I am not sure if it should be string or a vector meaning if the voter can vote for many people
 }
+ 
+//==============================================================================================================================
 
-//Main function, lol
+// Main function
 fn main() {
-    
-    //All ballots are closed on starting point
+    // Initialize the database
+    let conn = initialize_db().expect("Failed to initialize the database.");
+
+    // All ballots are closed on starting point
     let mut ballot = Ballot {
         offices: Vec::new(),
         is_open: false,
     };
-    
-    //To store the registered voters so that we can check if a voter is registered before being ablee to vote
-    let mut registered_voters: Vec<Voter> = Vec::new();  
 
-    loop{
-        println!("\t\t\t------------- WELCOME TO THE VOTING MACHINE --------------\n");
-        println!("\n\tAre you an admin or a voter ?(Type 'admin' or 'voter'): ");
+    // Main loop for the voting machine, will keep running until the user chooses to exit
+    loop {
+        println!("\n\n");
+        println!("\n\n");
+        println!("╔════════════════════════════════════════════════════════════════════════╗");
+        println!("║                                                                        ║");
+        println!("║  ██     ██  ███████  ██       ██████    █████   ███    ███  ███████    ║");
+        println!("║  ██     ██  ██       ██      ██    ██  ██   ██  ████  ████  ██         ║");
+        println!("║  ██  █  ██  █████    ██      ██        ██   ██  ██ ████ ██  █████      ║");
+        println!("║  ██ ███ ██  ██       ██      ██    ██  ██   ██  ██  ██  ██  ██         ║");
+        println!("║   ███ ███   ███████  ███████  ██████    █████   ██      ██  ███████    ║");
+        println!("║                                                                        ║");
+        println!("║                        TO THE VOTING MACHINE                           ║");
+        println!("║                                                                        ║");
+        println!("╚════════════════════════════════════════════════════════════════════════╝");
+        
+
+        println!("\n\tAre you an admin, or a voter? (Type 'exit' to leave) ");
+
+
+        // Get the user role input
         let mut user_role = String::new();
         std::io::stdin().read_line(&mut user_role).unwrap();
         let user_role = user_role.trim();
 
         match user_role {
-            "admin" =>{
+            "admin" => {
+                // Admin login and menu
                 if admin_login() {
-                    admin_menu(&mut ballot, &mut registered_voters);
+                    admin_menu(&conn, &mut ballot);
                 } else {
                     println!("\tERROR - Authentication failed. Returning to the main menu...");
                 }
             },
-            "voter" =>{
-                if let Some(voter) = verify_voter(&registered_voters) {
+            "voter" => {
+                // Verify voter and proceed to cast vote if election is open
+                if verify_voter(&conn) {
                     if ballot.is_open {
-                        cast_vote(&voter, &mut ballot);
+                        let candidate_name = get_input("Enter the candidate name you want to vote for:");
+                        cast_vote(&conn, &candidate_name);
                     } else {
                         println!("\tSorry, the election is currently closed.");
                     }
-                } else {
-                    println!("\tYou are not registered for voing, SORRY");
                 }
             },
-            _ => println!("\tSorry, user not recognized..."),
-            }
-
+            "exit" => {
+                // Exit option - break out of the main loop to end the program
+                println!("\nExiting the voting machine. Goodbye!");
+                break;
+            },
+            _ => println!("\tSorry, option not recognized. Please try again."),
         }
     }
+}
 
-//Admin log in function
+//===========================================================================================================================
+
+// Admin log in function
 fn admin_login() -> bool {
     let admin_username = "adminname";
     let admin_password = "adminpassword";
@@ -87,124 +116,138 @@ fn admin_login() -> bool {
     std::io::stdin().read_line(&mut password).unwrap();
     let password = password.trim();
 
-    //Checking if the credentials work
-    if username == admin_username && password == admin_password{
-        println!("Aaccess granted!");
+    // Checking if the credentials work
+    if username == admin_username && password == admin_password {
+        println!("Access granted!");
         true
-    }else {
+    } else {
         println!("Error! Access denied!");
         false
-        }
     }
+}
 
-    //To print the menu to the admin
-    fn admin_menu(ballot: &mut Ballot, registered_voters: &mut Vec<Voter>) {
-        loop {
-            println!("\t---------Admin Menu------------\n\t1. Create an election\n\t2. Register a voter\n\t3. Open election\n\t4. Close election\n\t5. Tally votes\n\t6. Exit");
-            let mut choice = String::new();
-            std::io::stdin().read_line(&mut choice).unwrap();
-            let choice = choice.trim();
-    
-            match choice {
-                "1" => {
-                    *ballot = create_election();
-                    println!("\n\t\tGREAT! Election created successfully!");
-                },
-                "2" => {
-                    register_voter(registered_voters);
-                },
-                "3" => open_ballot(ballot),
-                "4" => close_ballot(ballot),
-                "5" => tally_vote(ballot),
-                "6" => {
-                    println!("Exiting admin menu...");
-                    break;
-                },
-                _ => println!("Invalid choice. Please try again."),
-            }
-        }
-    }
-    
-    //Checking  if the voter is registered
-    fn verify_voter(registered_voters: &Vec<Voter>) -> Option<Voter> {
-        let voter_name = get_input("Enter your name:");
-        if is_voter_registered(registered_voters, &voter_name) {
-            Some(Voter {
-                name: voter_name,
-                date_of_birth: String::new(), // For simplicity; could be extended
-            })
-        } else {
-            None
-        }
-    }
+//===================================================================================================================================
 
-//Creating a ballot. I believe I still need to make some changes here
-fn create_election() -> Ballot{
+// Admin menu function
+fn admin_menu(conn: &Connection, ballot: &mut Ballot) {
+    loop {
+        println!("\t---------Admin Menu------------\n\t1. Create an election\n\t2. Register a voter\n\t3. Open election\n\t4. Close election\n\t5. Tally votes\n\t6. Exit");
+        let mut choice = String::new();
+        std::io::stdin().read_line(&mut choice).unwrap();
+        let choice = choice.trim();
+
+        match choice {
+            "1" => {
+                *ballot = create_election(conn);
+                println!("\n\t\tGREAT! Election created successfully!");
+            },
+            "2" => {
+                register_voter(conn);
+            },
+            "3" => open_ballot(ballot),
+            "4" => close_ballot(ballot),
+            "5" => tally_vote(conn),
+            "6" => {
+                println!("Exiting admin menu...");
+                break;
+            },
+            _ => println!("Invalid choice. Please try again."),
+        }
+    }
+}
+
+//=============================================================================================================
+
+// Registering a voter in the database
+fn register_voter(conn: &Connection) {
+    let name = get_input("\n\tEnter voter's complete name:");
+    let date_of_birth = get_input("\n\tEnter voter's date of birth (YYYY-MM-DD): ");
+
+    match db::register_voter(conn, &name, &date_of_birth) {
+        Ok(_) => println!("\n\tVoter registered successfully!"),
+        Err(err) => println!("Failed to register voter: {}", err),
+    }
+}
+
+//=============================================================================================================
+
+// Checking if the voter is registered in the database
+fn verify_voter(conn: &Connection) -> bool {
+    let voter_name = get_input("Enter your name:");
+    match db::is_voter_registered(conn, &voter_name) {
+        Ok(true) => true,
+        Ok(false) => {
+            println!("\tYou are not registered for voting, SORRY");
+            false
+        }
+        Err(err) => {
+            println!("Failed to verify voter: {}", err);
+            false
+        }
+    }
+}
+
+//================================================================================================================
+
+// Creating a ballot and storing offices/candidates in the database
+fn create_election(conn: &Connection) -> Ballot {
     let mut offices = Vec::new();
 
-    loop{
-        println!("\n\tPlease enter the name of the office (Presiedent, Judge, or Mayor): ");
-        let mut office_name = String::new();
-        std::io::stdin().read_line(&mut office_name).unwrap();
-        let office_name = office_name.trim();
+    loop {
+        let office_name = get_input("\n\tPlease enter the name of the office (President, Judge, or Mayor): ");
+        
+        // Insert office into database
+        conn.execute(
+            "INSERT INTO offices (name) VALUES (?1)",
+            params![office_name],
+        ).expect("Failed to create office");
 
         let mut candidates = Vec::new();
 
-        //Here, I am adding candidates to the specific office that was created
-        loop{
-            println!("\n\tPlease enter the name of the candidate: ");
-            let mut candidate_name = String::new();
-            std::io::stdin().read_line(&mut candidate_name).unwrap();
-            let candidate_name = candidate_name.trim();
+        // Adding candidates to the specific office that was created
+        loop {
+            let candidate_name = get_input("\n\tPlease enter the name of the candidate: ");
+            let party = get_input("\n\tPlease enter the political party of the candidate: ");
 
-            println!("\n\tPlease enter the political party of the previous candidate belongs to: ");
-            let mut party = String::new();
-            std::io::stdin().read_line(&mut party).unwrap();
-            let party = party.trim();
+            conn.execute(
+                "INSERT INTO candidates (name, party, office_id) VALUES (?1, ?2, (SELECT id FROM offices WHERE name = ?3))",
+                params![candidate_name, party, office_name],
+            ).expect("Failed to create candidate");
 
-            candidates.push(Candidate{
+            candidates.push(Candidate {
                 name: candidate_name.to_string(),
                 party: party.to_string(),
-                votes : 0,
+                votes: 0,
             });
 
-            println!("\n\tAdd another candidate to the office (type  'yes' or 'no')?:  ");
-            let mut ans = String::new();
-            std::io::stdin().read_line(&mut ans).unwrap();
-            if ans.trim().to_lowercase() != "yes" {
+            if get_input("\n\tAdd another candidate to the office (type 'yes' or 'no')?:  ").to_lowercase() != "yes" {
                 break;
             }
         }
-        offices.push(Office{
-            name : office_name.to_string(),
-            candidates : candidates,
+        offices.push(Office {
+            name: office_name.to_string(),
+            candidates,
         });
-        println!("\n\tAdd another office to the ballot (type  'yes' or 'no)?:  ");
-        let mut ans = String::new();
-        std::io::stdin().read_line(&mut ans).unwrap();
-        if ans.trim().to_lowercase() != "yes" {
+        if get_input("\n\tAdd another office to the ballot (type 'yes' or 'no')?:  ").to_lowercase() != "yes" {
             break;
         }
     }
-    Ballot {offices, is_open: true}
+    Ballot { offices, is_open: true }
 }
-//Registering a voter
-fn register_voter(registered_voters: &mut Vec<Voter>) {
-    loop {
-        let voter = Voter {
-            name: get_input("\n\tEnter voter's complete name:"),
-            date_of_birth: get_input("\n\tEnter voter's date of birth (YYYY-MM-DD): "),
-        };
-        registered_voters.push(voter);
-        println!("\n\tVoter registered successfully!");
 
-        let continue_input = get_input("\n\tDo you want to add another voter? (yes/no):");
-        if continue_input.trim().to_lowercase() != "yes" {
-            break;
-        }
+//===================================================================================================================
+
+// Cast a vote for a candidate in the database
+fn cast_vote(conn: &Connection, candidate_name: &str) {
+    match db::cast_vote(conn, candidate_name) {
+        Ok(_) => println!("Vote successfully cast for {}", candidate_name),
+        Err(err) => println!("Failed to cast vote: {}", err),
     }
 }
 
+//==================================================================================================================================
+
+// Function to retrieve input from the user
 fn get_input(prompt: &str) -> String {
     println!("{}", prompt);
     let mut input = String::new();
@@ -212,94 +255,50 @@ fn get_input(prompt: &str) -> String {
     input.trim().to_string()
 }
 
-//This function will check if the voter is registered
+//===========================================================================================================================
 
-fn is_voter_registered(registered_voters: &Vec<Voter>, name: &str) -> bool{
-    registered_voters.iter().any(|voter| voter.name == name) //I am not sure, but i guess this can used as a backdoor
-}
-
-fn tally_vote(ballot: &Ballot){
-    if ballot.is_open {
-        println!("Election is still open. Please close the election before tallying votes.");
-        return;
-    }
-    println!("---------------- ELECTION RESULTS --------------\n");
-    
-    for office in &ballot.offices {
-        println!("Office: {}", office.name);
-        for candidate in &office.candidates{
-            println!("{} ({}) - {}", candidate.name, candidate.party, candidate.votes);
-        }
-    }
-}
-
-//Open the election
-fn open_ballot (ballot: &mut Ballot){
+// Function to open the ballot for voting
+fn open_ballot(ballot: &mut Ballot) {
     if ballot.is_open {
         println!("Election is already open");
-    } else{
+    } else {
         ballot.is_open = true;
         println!("The election has been opened for voting.");
     }
 }
 
-//Close the election
-fn close_ballot(ballot: &mut Ballot){
-    if ballot.is_open{
+// Function to close the ballot for voting
+fn close_ballot(ballot: &mut Ballot) {
+    if ballot.is_open {
         ballot.is_open = false;
         println!("The ballot has been closed. No voting possible!");
-    }else{
-        println!("The election is already close");
-    }
-}
-
-fn cast_vote(voter: &Voter, ballot: &mut Ballot) {
-    if ballot.offices.is_empty() {
-        println!("No elections are currently available.");
-        return;
-    }
-
-    println!("Available elections:");
-    for (i, office) in ballot.offices.iter().enumerate() {
-        println!("{}. {}", i + 1, office.name);
-    }
-
-    let election_choice = get_input("Please select the number of the election you want to vote for:");
-
-    if let Ok(election_index) = election_choice.parse::<usize>() {
-        if election_index == 0 || election_index > ballot.offices.len() {
-            println!("Invalid election choice.");
-            return;
-        }
-
-        let selected_office = &mut ballot.offices[election_index - 1];
-
-        println!("Candidates for the {} election:", selected_office.name);
-        for (i, candidate) in selected_office.candidates.iter().enumerate() {
-            println!("{}. {} ({})", i + 1, candidate.name, candidate.party);
-        }
-
-        let candidate_choice = get_input("Please select the number of the candidate you want to vote for:");
-
-        if let Ok(candidate_index) = candidate_choice.parse::<usize>() {
-            if candidate_index == 0 || candidate_index > selected_office.candidates.len() {
-                println!("Invalid candidate choice.");
-                return;
-            }
-
-            let selected_candidate = &selected_office.candidates[candidate_index - 1];
-            println!(
-                "You voted for {} from the {} party in the {} election.",
-                selected_candidate.name, selected_candidate.party, selected_office.name
-            );
-//here we should add like a coounter or somethin to store teh votes for the tallying
-        } else {
-            println!("Invalid input. Please select a valid candidate number.");
-        }
     } else {
-        println!("Invalid input. Please select a valid election number.");
+        println!("The election is already closed.");
     }
 }
 
+//===========================================================================================================================
 
+// Tally votes function using the database
+fn tally_vote(conn: &Connection) {
+    println!("---------------- ELECTION RESULTS --------------\n");
+    let mut stmt = conn.prepare(
+        "SELECT o.name AS office_name, c.name AS candidate_name, c.party, c.votes 
+         FROM offices o 
+         JOIN candidates c ON c.office_id = o.id 
+         ORDER BY o.name, c.votes DESC",
+    ).expect("Failed to prepare tally query");
 
+    let results = stmt.query_map([], |row| {
+        let office_name: String = row.get(0)?;
+        let candidate_name: String = row.get(1)?;
+        let party: String = row.get(2)?;
+        let votes: i32 = row.get(3)?;
+        Ok((office_name, candidate_name, party, votes))
+    }).expect("Failed to map query results");
+
+    for result in results {
+        let (office_name, candidate_name, party, votes) = result.expect("Failed to read row");
+        println!("Office: {}\n  {} ({}) - {} votes", office_name, candidate_name, party, votes);
+    }
+}
