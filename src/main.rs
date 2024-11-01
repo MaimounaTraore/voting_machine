@@ -2,6 +2,7 @@ use rusqlite::{Connection, params};  // Import `params` macro here
 use std::env;
 mod db;
 use db::*;  // Import all functions and structs from db.rs
+use std::io::{self, Write};
 
 
 // Here I will define the structs for the different people we have
@@ -147,7 +148,10 @@ fn admin_menu(conn: &Connection, ballot: &mut Ballot) {
             "3" => open_ballot(ballot),
             "4" => close_ballot(ballot),
             "5" => tally_vote(conn),
-            "6" => {
+            "6" => delete_voter(conn),
+            "7" => delete_candidate(conn),
+            "8" => delete_office(conn),
+            "9" => {
                 println!("Exiting admin menu...");
                 break;
             },
@@ -174,7 +178,9 @@ fn register_voter(conn: &Connection) {
 // Checking if the voter is registered in the database
 fn verify_voter(conn: &Connection) -> bool {
     let voter_name = get_input("Enter your name:");
-    match db::is_voter_registered(conn, &voter_name) {
+    let voter_dob = get_input("Enter your date of birth (YYYY-MM-DD):");
+
+    match db::is_voter_registered(conn, &voter_name, &voter_dob) {
         Ok(true) => true,
         Ok(false) => {
             println!("\tYou are not registered for voting, SORRY");
@@ -302,3 +308,86 @@ fn tally_vote(conn: &Connection) {
         println!("Office: {}\n  {} ({}) - {} votes", office_name, candidate_name, party, votes);
     }
 }
+
+//========================================================= DELETION FUNCTIONS ===================================================================
+
+
+//Deleting a voter
+fn delete_voter(conn: &Connection) {
+    let voter_name = get_input("\n\tEnter the name of the voter to delete:");
+
+    match conn.execute(
+        "DELETE FROM voters WHERE name = ?1",
+        params![voter_name],
+    ) {
+        Ok(deleted) => {
+            if deleted > 0 {
+                println!("\n\tVoter '{}' deleted successfully!", voter_name);
+            } else {
+                println!("\n\tNo voter found with that name.");
+            }
+        }
+        Err(err) => println!("Failed to delete voter: {}", err),
+    }
+}
+//=================================================================================================================================
+
+// Deleting a candidate
+
+fn delete_candidate(conn: &Connection) {
+    let candidate_name = get_input("\n\tEnter the name of the candidate to delete:");
+    let office_name = get_input("\n\tEnter the office the candidate is running for:");
+
+    match conn.execute(
+        "DELETE FROM candidates WHERE name = ?1 AND office_id = (SELECT id FROM offices WHERE name = ?2)",
+        params![candidate_name, office_name],
+    ) {
+        Ok(deleted) => {
+            if deleted > 0 {
+                println!("\n\tCandidate '{}' from office '{}' deleted successfully!", candidate_name, office_name);
+            } else {
+                println!("\n\tNo candidate found with that name and office.");
+            }
+        }
+        Err(err) => println!("Failed to delete candidate: {}", err),
+    }
+}
+//=================================================================================================================================
+
+// Deleting and office
+
+fn delete_office(conn: &Connection) {
+    let office_name = get_input("\n\tEnter the name of the office to delete:");
+
+    // First, delete all candidates associated with this office
+    match conn.execute(
+        "DELETE FROM candidates WHERE office_id = (SELECT id FROM offices WHERE name = ?1)",
+        params![office_name],
+    ) {
+        Ok(deleted) => {
+            println!("\n\tDeleted {} candidates associated with office '{}'.", deleted, office_name);
+        }
+        Err(err) => println!("Failed to delete candidates: {}", err),
+    }
+
+    // Then, delete the office itself
+    match conn.execute(
+        "DELETE FROM offices WHERE name = ?1",
+        params![office_name],
+    ) {
+        Ok(deleted) => {
+            if deleted > 0 {
+                println!("\n\tOffice '{}' deleted successfully!", office_name);
+            } else {
+                println!("\n\tNo office found with that name.");
+            }
+        }
+        Err(err) => println!("Failed to delete office: {}", err),
+    }
+}
+
+//============================================================================================================================================
+
+
+
+

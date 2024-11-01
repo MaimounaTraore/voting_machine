@@ -64,10 +64,10 @@ pub fn register_voter(conn: &Connection, name: &str, date_of_birth: &str) -> Res
 }
 
 // Check if a voter is registered
-pub fn is_voter_registered(conn: &Connection, name: &str) -> Result<bool> {
-    let mut stmt = conn.prepare("SELECT COUNT(*) FROM voters WHERE name = ?1")?;
-    let count: i64 = stmt.query_row(params![name], |row| row.get(0))?;
-    Ok(count > 0)
+pub fn is_voter_registered(conn: &Connection, name: &str, dob: &str) -> Result<bool, rusqlite::Error> {
+    let mut stmt = conn.prepare("SELECT EXISTS(SELECT 1 FROM voters WHERE name = ?1 AND date_of_birth = ?2)")?;
+    let exists: bool = stmt.query_row(params![name, dob], |row| row.get(0))?;
+    Ok(exists)
 }
 
 // Cast a vote by incrementing the vote count for a candidate
