@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 rusqlite = { version = "0.26", features = ["bundled"] }
 chrono = "0.4"
+colored = "2.0"

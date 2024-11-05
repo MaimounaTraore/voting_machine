@@ -50,6 +50,18 @@ pub fn initialize_db() -> Result<Connection> {
         [],
     )?;
 
+    // Create votes table to ensure each voter can vote only once per office
+conn.execute(
+    "CREATE TABLE IF NOT EXISTS votes (
+         id INTEGER PRIMARY KEY,
+         voter_id INTEGER,
+         office_id INTEGER,
+         FOREIGN KEY(voter_id) REFERENCES voters(id),
+         FOREIGN KEY(office_id) REFERENCES offices(id)
+     )",
+    [],
+)?;
+
     Ok(conn) // Return the connection after setting up tables
 }
 
@@ -77,5 +89,21 @@ pub fn cast_vote(conn: &Connection, candidate_name: &str) -> Result<()> {
         params![candidate_name],
     )?;
     println!("Vote cast for candidate {}", candidate_name);
+    Ok(())
+}
+
+// Check if a voter has already voted for a specific office
+pub fn has_voted(conn: &Connection, voter_id: i32, office_id: i32) -> Result<bool> {
+    let mut stmt = conn.prepare("SELECT EXISTS(SELECT 1 FROM votes WHERE voter_id = ?1 AND office_id = ?2)")?;
+    let already_voted: bool = stmt.query_row(params![voter_id, office_id], |row| row.get(0))?;
+    Ok(already_voted)
+}
+
+// Record a new vote in the votes table
+pub fn record_vote(conn: &Connection, voter_id: i32, office_id: i32) -> Result<()> {
+    conn.execute(
+        "INSERT INTO votes (voter_id, office_id) VALUES (?1, ?2)",
+        params![voter_id, office_id],
+    )?;
     Ok(())
 }
