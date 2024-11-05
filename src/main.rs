@@ -366,9 +366,17 @@ fn handle_voter(conn: &Connection, ballot: &Ballot) {
 
     if verify_voter(conn, &voter_name, &voter_dob) {
         if ballot.is_open {
-            if let Some(office_name) = choose_office(conn) {
-                if let Some(candidate_name) = choose_candidate(conn, &office_name) {
-                    cast_vote(conn, &voter_name, &office_name, &candidate_name);
+            loop {
+                if let Some(office_name) = choose_office(conn) {
+                    if office_name.to_lowercase() == "logout" {
+                        println!("Logging out... Returning to the main menu.");
+                        break;
+                    }
+                    if let Some(candidate_name) = choose_candidate(conn, &office_name) {
+                        cast_vote(conn, &voter_name, &office_name, &candidate_name);
+                    }
+                } else {
+                    println!("Invalid selection, please choose an available office.");
                 }
             }
         } else {
@@ -378,13 +386,16 @@ fn handle_voter(conn: &Connection, ballot: &Ballot) {
         println!("\tERROR: You are not registered for voting.");
     }
 }
+
 //===================================================================================================================
 
 // Display available offices and select one
+
 fn choose_office(conn: &Connection) -> Option<String> {
     println!("\n\n");
     println!("╔════════════════════════════════════════════════╗");
     println!("║              🏛️  Available Offices 🏛️              ║");
+    println!("║     (Type 'logout' to return to the main menu) ║");
     println!("╚════════════════════════════════════════════════╝");
     println!("Please select an office to vote for:");
 
@@ -398,6 +409,10 @@ fn choose_office(conn: &Connection) -> Option<String> {
     }
 
     let office_choice = get_input("Type the name of the office you want to vote for:");
+    if office_choice.to_lowercase() == "logout" {
+        return Some("logout".to_string());
+    }
+    
     let office_choice_lower = office_choice.to_lowercase();
     for office in &office_names {
         if office.to_lowercase() == office_choice_lower {
@@ -407,6 +422,7 @@ fn choose_office(conn: &Connection) -> Option<String> {
     println!("Invalid office choice.");
     None
 }
+
 //================================================================================================================================================
 
 // Display candidates for selected office and select one
