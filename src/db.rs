@@ -20,10 +20,11 @@ pub fn initialize_db() -> Result<Connection> {
     // Create voters table if it doesn't exist
     conn.execute(
         "CREATE TABLE IF NOT EXISTS voters (
-             id INTEGER PRIMARY KEY,
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
              name TEXT NOT NULL,
              date_of_birth TEXT NOT NULL,
-             has_voted BOOLEAN NOT NULL DEFAULT 0
+             has_voted BOOLEAN NOT NULL DEFAULT 0,
+             UNIQUE(name, date_of_birth)
          )",
         [],
     )?;
@@ -31,8 +32,8 @@ pub fn initialize_db() -> Result<Connection> {
     // Create offices table if it doesn't exist
     conn.execute(
         "CREATE TABLE IF NOT EXISTS offices (
-             id INTEGER PRIMARY KEY,
-             name TEXT NOT NULL
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE
          )",
         [],
     )?;
@@ -67,13 +68,23 @@ conn.execute(
 
 // Register a new voter in the database
 pub fn register_voter(conn: &Connection, name: &str, date_of_birth: &str) -> Result<()> {
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM voters WHERE name = ?1 COLLATE NOCASE AND date_of_birth = ?2")?;
+    let voter_exists: i32 = stmt.query_row(params![name, date_of_birth], |row| row.get(0))?;
+
+    if voter_exists > 0 {
+        println!("\n\tVoter '{}' with the date of birth '{}' is already registered!", name, date_of_birth);
+        return Ok(()); 
+    }
+
     conn.execute(
         "INSERT INTO voters (name, date_of_birth, has_voted) VALUES (?1, ?2, ?3)",
         params![name, date_of_birth, false],
     )?;
-    println!("Voter {} registered successfully!", name);
+
+    println!("Voter '{}' registered successfully!", name);
     Ok(())
 }
+
 
 // Check if a voter is registered
 pub fn is_voter_registered(conn: &Connection, name: &str, dob: &str) -> Result<bool, rusqlite::Error> {

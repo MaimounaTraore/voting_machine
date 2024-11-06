@@ -242,14 +242,27 @@ fn register_voter(conn: &Connection) {
     match NaiveDate::parse_from_str(&date_of_birth, "%m/%d/%Y") {
         Ok(parsed_date) => {
             let formatted_date = parsed_date.format("%m/%d/%Y").to_string();
+            
+            // Attempt to register the voter
             match db::register_voter(conn, &name, &formatted_date) {
-                Ok(_) => println!("\n\tVoter registered successfully!"),
-                Err(err) => println!("Failed to register voter: {}", err),
+                Ok(_) => {
+                    // Only print this if the voter was actually inserted
+                    // println!("\n\tVoter '{}' registered successfully!", name);
+                }
+                Err(err) => {
+                    // Check if the error is due to a UNIQUE constraint violation or other error
+                    if err.to_string().contains("already registered") {
+                        println!("\n\tA voter with the same name and date of birth already exists.");
+                    } else {
+                        println!("Failed to register voter: {}", err);
+                    }
+                }
             }
         }
         Err(_) => println!("Invalid date format. Please enter the date in MM/DD/YYYY format."),
     }
 }
+
 
 //=============================================================================================================
 
@@ -311,12 +324,37 @@ fn create_election(conn: &Connection) -> Ballot {
 
     loop {
         let office_name = get_input("\n\tPlease enter the name of the office (President, Judge, or Mayor): ");
-        
+
+        // Check if the office already exists (case-insensitive)
+        let mut stmt = match conn.prepare("SELECT COUNT(*) FROM offices WHERE name = ?1 COLLATE NOCASE") {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                println!("Failed to prepare statement: {}", err);
+                continue;
+            }
+        };
+
+        let existing_office_count: i32 = match stmt.query_row(params![&office_name], |row| row.get(0)) {
+            Ok(count) => count,
+            Err(err) => {
+                println!("Failed to check if the office exists: {}", err);
+                continue;
+            }
+        };
+
+        if existing_office_count > 0 {
+            println!("An office with the name '{}' already exists!", office_name);
+            continue; // Skip the rest of the loop and prompt for office name again
+        }
+
         // Insert office into database
-        conn.execute(
+        if let Err(err) = conn.execute(
             "INSERT INTO offices (name) VALUES (?1)",
             params![office_name],
-        ).expect("Failed to create office");
+        ) {
+            println!("Failed to create office: {}", err);
+            continue;
+        }
 
         let mut candidates = Vec::new();
 
@@ -325,10 +363,13 @@ fn create_election(conn: &Connection) -> Ballot {
             let candidate_name = get_input("\n\tPlease enter the name of the candidate: ");
             let party = get_input("\n\tPlease enter the political party of the candidate: ");
 
-            conn.execute(
+            if let Err(err) = conn.execute(
                 "INSERT INTO candidates (name, party, office_id) VALUES (?1, ?2, (SELECT id FROM offices WHERE name = ?3))",
                 params![candidate_name, party, office_name],
-            ).expect("Failed to create candidate");
+            ) {
+                println!("Failed to create candidate: {}", err);
+                continue;
+            }
 
             candidates.push(Candidate {
                 name: candidate_name.to_string(),
@@ -344,12 +385,15 @@ fn create_election(conn: &Connection) -> Ballot {
             name: office_name.to_string(),
             candidates,
         });
+
         if get_input("\n\tAdd another office to the ballot (type 'yes' or 'no')?:  ").to_lowercase() != "yes" {
             break;
         }
     }
     Ballot { offices, is_open: true }
 }
+
+
 
 //===================================================================================================================
 
@@ -502,7 +546,7 @@ fn delete_voter(conn: &Connection) {
     let voter_name = get_input("\n\tEnter the name of the voter to delete:");
 
     match conn.execute(
-        "DELETE FROM voters WHERE name = ?1",
+        "DELETE FROM voters WHERE LOWER(name) = ?1",
         params![voter_name],
     ) {
         Ok(deleted) => {
@@ -522,7 +566,7 @@ fn delete_candidate(conn: &Connection) {
     let office_name = get_input("\n\tEnter the office the candidate is running for:");
 
     match conn.execute(
-        "DELETE FROM candidates WHERE name = ?1 AND office_id = (SELECT id FROM offices WHERE name = ?2)",
+        "DELETE FROM candidates WHERE LOW(name) = ?1 AND office_id = (SELECT id FROM offices WHERE  LOW(name) = ?2)",
         params![candidate_name, office_name],
     ) {
         Ok(deleted) => {
@@ -542,7 +586,7 @@ fn delete_office(conn: &Connection) {
 
     // First, delete all candidates associated with this office
     match conn.execute(
-        "DELETE FROM candidates WHERE office_id = (SELECT id FROM offices WHERE name = ?1)",
+        "DELETE FROM candidates WHERE office_id = (SELECT id FROM offices WHERE LOW(name) = ?1)",
         params![office_name],
     ) {
         Ok(deleted) => {
@@ -553,7 +597,7 @@ fn delete_office(conn: &Connection) {
 
     // Then, delete the office itself
     match conn.execute(
-        "DELETE FROM offices WHERE name = ?1",
+        "DELETE FROM offices WHERE LOW (name) = ?1",
         params![office_name],
     ) {
         Ok(deleted) => {
