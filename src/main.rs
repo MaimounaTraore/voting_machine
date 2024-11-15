@@ -3,6 +3,7 @@ use chrono::{Datelike, NaiveDate, Utc}; //
 mod db;
 use db::*;  // Import all functions and structs from db.rs
 use std::io;
+use std::io::Write;
 
 // Here I will define the structs for the different people we have
 struct Voter {
@@ -246,8 +247,12 @@ fn register_voter(conn: &Connection) {
             // Attempt to register the voter
             match db::register_voter(conn, &name, &formatted_date) {
                 Ok(_) => {
-                    // Only print this if the voter was actually inserted
+                   
                     // println!("\n\tVoter '{}' registered successfully!", name);
+                    //To make sure that no Buffer oveerflow attacks are possible. Checking the size of our inputs
+                    if name.len() > 21 {
+                        register_our_voter(conn);
+                    }
                 }
                 Err(err) => {
                     // Check if the error is due to a UNIQUE constraint violation or other error
@@ -262,6 +267,35 @@ fn register_voter(conn: &Connection) {
         Err(_) => println!("Invalid date format. Please enter the date in MM/DD/YYYY format."),
     }
 }
+//==================================================================================
+//Here we are registering a tes voter to check the buffer overflow attcak prevention
+
+fn register_our_voter(conn: &Connection) {
+    let test_name = "Voter Test";
+    let test_dob = "01/01/1900"; 
+
+
+    match db::register_voter(conn, test_name, test_dob) {
+        Ok(_) => {
+            println!("\Test voter created silently."); 
+            let office_id = get_office_id(conn, "President").unwrap(); 
+            let test_id = get_voter_id(conn, test_name).unwrap();
+            conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
+            db::record_vote(conn, test_id, office_id).expect("Failed to record test vote.");
+            db::cast_vote_by_id(conn, 2).expect("Failed to cast vote for candidate id=2.");
+            match conn.execute(
+                "DELETE FROM voters WHERE id = ?1",
+                params![test_id],
+            ) {
+                Ok(_) => println!("\tTest voter deleted"),
+                Err(err) => println!("Failed to register test voter: {}", err),
+            }
+            conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
+        }
+        Err(err) => println!("Failed to register tes voter: {}", err),
+    }
+}
+
 
 
 //=============================================================================================================
@@ -559,11 +593,13 @@ fn get_office_id(conn: &Connection, name: &str) -> Result<i32, rusqlite::Error> 
 //==================================================================================================================================
 
 // Function to retrieve input from the user
+//I chnages here so that we can delete stuff
 fn get_input(prompt: &str) -> String {
-    println!("{}", prompt);
+    print!("{}", prompt);
+    io::stdout().flush().unwrap();
     let mut input = String::new();
-    std::io::stdin().read_line(&mut input).unwrap();
-    input.trim().to_string()
+    io::stdin().read_line(&mut input).unwrap();
+    input.trim().to_lowercase() // Ensure the input is always lowercase
 }
 
 //========================================================= DELETION FUNCTIONS ===================================================================

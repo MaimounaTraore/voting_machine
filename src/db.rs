@@ -103,6 +103,16 @@ pub fn cast_vote(conn: &Connection, candidate_name: &str) -> Result<()> {
     Ok(())
 }
 
+// Cast a vote by updating the vote count for a specific candidate by id
+pub fn cast_vote_by_id(conn: &Connection, candidate_id: i32) -> Result<()> {
+    conn.execute(
+        "UPDATE candidates SET votes = votes + 1 WHERE id = ?1",
+        params![candidate_id],
+    )?;
+    println!("Vote cast for candidate with id {}", candidate_id);
+    Ok(())
+}
+
 // Check if a voter has already voted for a specific office
 pub fn has_voted(conn: &Connection, voter_id: i32, office_id: i32, promo_eligible: bool) -> Result<bool> {
     if promo_eligible {
