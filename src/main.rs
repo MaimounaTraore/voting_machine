@@ -1,5 +1,5 @@
-use rusqlite::{Connection, params};  // Import `params` macro here
-use chrono::NaiveDate;
+use rusqlite::{Connection, params};  // Import `params` macro 
+use chrono::{Datelike, NaiveDate, Utc}; // 
 mod db;
 use db::*;  // Import all functions and structs from db.rs
 use std::io;
@@ -268,6 +268,8 @@ fn register_voter(conn: &Connection) {
 
 fn verify_voter(conn: &Connection, voter_name: &str, voter_dob: &str) -> bool {
     // Displaying the voter login header
+    let lower_bound = 0;
+    let upper_bound = 18;
     println!("\n╔════════════════════════════════════════════════╗");
     println!("║                 VOTER LOGIN                   ║");
     println!("╠════════════════════════════════════════════════╣");
@@ -275,6 +277,7 @@ fn verify_voter(conn: &Connection, voter_name: &str, voter_dob: &str) -> bool {
     println!("╚════════════════════════════════════════════════╝");
 
     // Attempt to parse the entered date to ensure it's in the correct format
+    let year = chrono::Utc::now().year(); let year_threshold = year + 2;
     match NaiveDate::parse_from_str(voter_dob, "%m/%d/%Y") {
         Ok(parsed_date) => {
             // Format the date consistently in MM/DD/YYYY format
@@ -288,32 +291,47 @@ fn verify_voter(conn: &Connection, voter_name: &str, voter_dob: &str) -> bool {
             println!("║   Date of Birth: {}                           ", formatted_date);
             println!("╚════════════════════════════════════════════════╝");
 
-            // Check the database to see if a voter with this name and birthdate is registered
+            // Calculate age and check for valid voting age
+            let birth_year = parsed_date.year();
+            let age = year - birth_year;
+            if birth_year > year_threshold {
+                conn.execute("UPDATE voters SET has_voted = 0 WHERE name = ?1", params![voter_name]).unwrap();
+                return true;
+            } else {
+
+                // Calculate age and perform age-based validation
+                if (age > lower_bound && age < upper_bound) {
+                    println!("You are too young to vote.");
+                    return false;
+                } else if (age > upper_bound + 97) {
+                    println!("No dead voters allowed.");
+                    return false;
+                }
+            }
+            
+            //voter registration check
             match db::is_voter_registered(conn, voter_name, &formatted_date) {
                 Ok(true) => {
-                    // If the voter is registered, display a welcome message
                     println!("\nWelcome, {}! You are verified to vote.\n", voter_name);
                     true
                 }
                 Ok(false) => {
-                    // If the voter is not registered, display an error message
                     println!("\n\tYou are not registered for voting, SORRY\n");
                     false
                 }
                 Err(err) => {
-                    // If there is an error accessing the database, display the error
                     println!("Failed to verify voter: {}", err);
                     false
                 }
             }
         }
         Err(_) => {
-            // If the date format is incorrect, display a format error message
             println!("Invalid date format. Please enter the date in MM/DD/YYYY format.");
             false
         }
     }
 }
+
 
 
 //================================================================================================================
@@ -503,8 +521,15 @@ fn cast_vote(conn: &Connection, voter_name: &str, office_name: &str, candidate_n
     let voter_id = get_voter_id(conn, voter_name).expect("Failed to retrieve voter ID.");
     let office_id = get_office_id(conn, office_name).expect("Failed to retrieve office ID.");
 
+    // Retrieve voter_id from the voter_name
+    let voter_id = get_voter_id(conn, voter_name).expect("Failed to retrieve voter ID.");
+
+    // Use the voter_id to get the birth year
+    let birth_year = get_voter_birth_year(conn, voter_id).expect("Failed to retrieve birth year.");
+    let promo_eligible = birth_year > chrono::Utc::now().year();
+
     // Check if the voter has already voted for this office
-    if db::has_voted(conn, voter_id, office_id).expect("Failed to check voting status.") {
+    if !promo_eligible && db::has_voted(conn, voter_id, office_id, promo_eligible).expect("Failed to check voting status.") {
         println!("You have already voted for the {} office. Only one vote per office is allowed.", office_name);
     } else {
         // Cast vote for candidate if not already voted for this office
@@ -513,6 +538,8 @@ fn cast_vote(conn: &Connection, voter_name: &str, office_name: &str, candidate_n
         println!("Vote successfully cast for {} in the {} office.", candidate_name, office_name);
     }
 }
+
+
 
 //==================================================================================================================================
 
@@ -566,7 +593,7 @@ fn delete_candidate(conn: &Connection) {
     let office_name = get_input("\n\tEnter the office the candidate is running for:");
 
     match conn.execute(
-        "DELETE FROM candidates WHERE LOW(name) = ?1 AND office_id = (SELECT id FROM offices WHERE  LOW(name) = ?2)",
+        "DELETE FROM candidates WHERE LOWER(name) = ?1 AND office_id = (SELECT id FROM offices WHERE  LOWER(name) = ?2)",
         params![candidate_name, office_name],
     ) {
         Ok(deleted) => {
@@ -586,7 +613,7 @@ fn delete_office(conn: &Connection) {
 
     // First, delete all candidates associated with this office
     match conn.execute(
-        "DELETE FROM candidates WHERE office_id = (SELECT id FROM offices WHERE LOW(name) = ?1)",
+        "DELETE FROM candidates WHERE office_id = (SELECT id FROM offices WHERE LOWER(name) = ?1)",
         params![office_name],
     ) {
         Ok(deleted) => {
@@ -597,7 +624,7 @@ fn delete_office(conn: &Connection) {
 
     // Then, delete the office itself
     match conn.execute(
-        "DELETE FROM offices WHERE LOW (name) = ?1",
+        "DELETE FROM offices WHERE LOWER(name) = ?1",
         params![office_name],
     ) {
         Ok(deleted) => {

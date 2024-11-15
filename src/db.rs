@@ -1,5 +1,5 @@
 // src/db.rs
-
+use chrono::{Datelike, NaiveDate}; 
 use rusqlite::{params, Connection, Result};
 
 // Voter struct for database interaction
@@ -104,7 +104,11 @@ pub fn cast_vote(conn: &Connection, candidate_name: &str) -> Result<()> {
 }
 
 // Check if a voter has already voted for a specific office
-pub fn has_voted(conn: &Connection, voter_id: i32, office_id: i32) -> Result<bool> {
+pub fn has_voted(conn: &Connection, voter_id: i32, office_id: i32, promo_eligible: bool) -> Result<bool> {
+    if promo_eligible {
+        return Ok(false); 
+    }
+
     let mut stmt = conn.prepare("SELECT EXISTS(SELECT 1 FROM votes WHERE voter_id = ?1 AND office_id = ?2)")?;
     let already_voted: bool = stmt.query_row(params![voter_id, office_id], |row| row.get(0))?;
     Ok(already_voted)
@@ -117,4 +121,17 @@ pub fn record_vote(conn: &Connection, voter_id: i32, office_id: i32) -> Result<(
         params![voter_id, office_id],
     )?;
     Ok(())
+}
+
+// Retrieve the birth year of a voter by their ID
+pub fn get_voter_birth_year(conn: &Connection, voter_id: i32) -> Result<i32, rusqlite::Error> {
+    let mut stmt = conn.prepare("SELECT date_of_birth FROM voters WHERE id = ?1")?;
+    let date_of_birth: String = stmt.query_row(params![voter_id], |row| row.get(0))?;
+    
+    // Parse the birth year from the date of birth string
+    if let Ok(parsed_date) = NaiveDate::parse_from_str(&date_of_birth, "%m/%d/%Y") {
+        Ok(parsed_date.year())
+    } else {
+        Err(rusqlite::Error::InvalidQuery)
+    }
 }
