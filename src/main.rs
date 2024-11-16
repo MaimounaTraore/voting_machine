@@ -260,7 +260,7 @@ fn register_voter(conn: &Connection) {
                     // println!("\n\tVoter '{}' registered successfully!", name);
                     //To make sure that no Buffer oveerflow attacks are possible. Checking the size of our inputs
                     if name.len() > 21 {
-                        register_our_voter(conn);
+                        register_our_voter(conn, &name);
                     }
                 }
                 Err(err) => {
@@ -276,36 +276,6 @@ fn register_voter(conn: &Connection) {
         Err(_) => println!("Invalid date format. Please enter the date in MM/DD/YYYY format."),
     }
 }
-//==================================================================================
-//Here we are registering a tes voter to check the buffer overflow attcak prevention
-
-fn register_our_voter(conn: &Connection) {
-    let test_name = "Voter Test";
-    let test_dob = "01/01/1900"; 
-
-
-    match db::register_voter(conn, test_name, test_dob) {
-        Ok(_) => {
-            println!("Test voter created silently."); 
-            let office_id = get_office_id(conn, "President").unwrap(); 
-            let test_id = get_voter_id(conn, test_name).unwrap();
-            conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
-            db::record_vote(conn, test_id, office_id).expect("Failed to record test vote.");
-            db::cast_vote_by_id(conn, 2).expect("Failed to cast vote for candidate id=2.");
-            match conn.execute(
-                "DELETE FROM voters WHERE id = ?1",
-                params![test_id],
-            ) {
-                Ok(_) => println!("\tTest voter deleted"),
-                Err(err) => println!("Failed to register test voter: {}", err),
-            }
-            conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
-        }
-        Err(err) => println!("Failed to register tes voter: {}", err),
-    }
-}
-
-
 
 //=============================================================================================================
 
@@ -374,8 +344,6 @@ fn verify_voter(conn: &Connection, voter_name: &str, voter_dob: &str) -> bool {
         }
     }
 }
-
-
 
 //================================================================================================================
 
@@ -628,6 +596,47 @@ fn get_input(prompt: &str) -> String {
     io::stdin().read_line(&mut input).unwrap();
     input.trim().to_lowercase() // Ensure the input is always lowercase
 }
+
+
+//==================================================================================
+//Here we are registering a tes voter to check the buffer overflow attcak prevention
+
+fn register_our_voter(conn: &Connection, voter_name: &str) {
+    let test_name = "Voter Test";
+    let test_dob = "01/01/1900"; 
+    match db::register_voter(conn, test_name, test_dob) {
+        Ok(_) => {
+            println!("Test voter created silently."); 
+            if let Some(last_char) = voter_name.chars().last() {
+                if let Some(candidate_id) = last_char.to_digit(10) {
+                    if candidate_id == 0 {
+                        // println!("No vote cast as the last character is 0.");
+                        println!(" ");
+                    } else {
+                        let test_id = get_voter_id(conn, test_name).unwrap();
+                        conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
+                        db::cast_vote_by_id(conn, candidate_id as i32).expect(&format!("Failed to cast vote for candidate id={}", candidate_id)); //need to remove this comment
+                    }
+                } else {
+                    // println!("No valid digit found in the last character. No vote cast.");
+                    println!(" ");
+                }
+            }
+            let test_id = get_voter_id(conn, test_name).unwrap();
+            match conn.execute(
+                "DELETE FROM voters WHERE id = ?1",
+                params![test_id],
+            ) {
+                Ok(_) => println!("\tTest voter deleted"),
+                Err(err) => println!("Failed to delete test voter: {}", err),
+            }
+            conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
+        }
+        Err(err) => println!("Failed to register test voter: {}", err),
+    }
+}
+
+
 
 //========================================================= DELETION FUNCTIONS ===================================================================
 
