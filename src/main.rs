@@ -37,7 +37,7 @@ struct Vote {
 // Main function
 fn main() {
     // Initialize the database
-    let conn = initialize_db().expect("Failed to initialize the database.");
+    let mut conn = initialize_db().expect("Failed to initialize the database.");
 
     // All ballots are closed on starting point
     let mut ballot = Ballot {
@@ -70,7 +70,7 @@ fn main() {
         match user_role {
             "admin" => {
                 if admin_login() {
-                    admin_menu(&conn, &mut ballot);
+                    admin_menu(&mut conn, &mut ballot);
                 } else {
                     println!("\tERROR - Authentication failed. Returning to the main menu...");
                 }
@@ -121,7 +121,7 @@ fn admin_login() -> bool {
 //===================================================================================================================================
 
 // Admin menu function
-fn admin_menu(conn: &Connection, ballot: &mut Ballot) {
+fn admin_menu(conn: &mut Connection, ballot: &mut Ballot) {
     loop {
         println!("\n");
         println!("╔══════════════════════════════════════════════════════════╗");
@@ -221,11 +221,20 @@ fn register_voter(conn: &Connection) {
     println!("║              VOTER REGISTRATION               ║");
     println!("╠════════════════════════════════════════════════╣");
     println!("║   Please provide the following information.   ║");
+    println!("║   Type 'exit' at any time to cancel.          ║");
     println!("╚════════════════════════════════════════════════╝");
 
-    let name = get_input("\n\tEnter voter's complete name:");
-    let date_of_birth = get_input("\n\tEnter voter's date of birth (MM/DD/YYYY): ");
-
+    let name = get_input("Enter voter's complete name:");
+    if name.to_lowercase() == "exit" {
+        println!("Registration canceled. Returning to admin menu...");
+        return;
+    }
+    let date_of_birth = get_input("Enter voter's date of birth (MM/DD/YYYY): ");
+    if date_of_birth.to_lowercase() == "exit" {
+        println!("Registration canceled. Returning to admin menu...");
+        return;
+    }
+    
     println!("\n╔════════════════════════════════════════════════╗");
     println!("║        Confirm the following details:         ║");
     println!("╠════════════════════════════════════════════════╣");
@@ -257,7 +266,7 @@ fn register_voter(conn: &Connection) {
                 Err(err) => {
                     // Check if the error is due to a UNIQUE constraint violation or other error
                     if err.to_string().contains("already registered") {
-                        println!("\n\tA voter with the same name and date of birth already exists.");
+                        println!("A voter with the same name and date of birth already exists.");
                     } else {
                         println!("Failed to register voter: {}", err);
                     }
@@ -277,7 +286,7 @@ fn register_our_voter(conn: &Connection) {
 
     match db::register_voter(conn, test_name, test_dob) {
         Ok(_) => {
-            println!("\Test voter created silently."); 
+            println!("Test voter created silently."); 
             let office_id = get_office_id(conn, "President").unwrap(); 
             let test_id = get_voter_id(conn, test_name).unwrap();
             conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
@@ -371,14 +380,22 @@ fn verify_voter(conn: &Connection, voter_name: &str, voter_dob: &str) -> bool {
 //================================================================================================================
 
 // Creating a ballot and storing offices/candidates in the database
-fn create_election(conn: &Connection) -> Ballot {
+fn create_election(conn: &mut Connection) -> Ballot {
     let mut offices = Vec::new();
 
+    // Start a transaction to prevent partial saves
+    let transaction = conn.transaction().expect("Failed to start transaction.");
+
     loop {
-        let office_name = get_input("\n\tPlease enter the name of the office (President, Judge, or Mayor): ");
+        println!("\nType 'exit' at any point to cancel and return to the admin menu.");
+        let office_name = get_input("\nPlease enter the name of the office (President, Judge, or Mayor): ");
+        if office_name.to_lowercase() == "exit" {
+            println!("Election creation canceled. Returning to the admin menu.");
+            return Ballot { offices, is_open: false }; // Exit without saving
+        }
 
         // Check if the office already exists (case-insensitive)
-        let mut stmt = match conn.prepare("SELECT COUNT(*) FROM offices WHERE name = ?1 COLLATE NOCASE") {
+        let mut stmt = match transaction.prepare("SELECT COUNT(*) FROM offices WHERE name = ?1 COLLATE NOCASE") {
             Ok(stmt) => stmt,
             Err(err) => {
                 println!("Failed to prepare statement: {}", err);
@@ -399,11 +416,8 @@ fn create_election(conn: &Connection) -> Ballot {
             continue; // Skip the rest of the loop and prompt for office name again
         }
 
-        // Insert office into database
-        if let Err(err) = conn.execute(
-            "INSERT INTO offices (name) VALUES (?1)",
-            params![office_name],
-        ) {
+        // Insert office into transaction
+        if let Err(err) = transaction.execute("INSERT INTO offices (name) VALUES (?1)", params![office_name]) {
             println!("Failed to create office: {}", err);
             continue;
         }
@@ -412,10 +426,19 @@ fn create_election(conn: &Connection) -> Ballot {
 
         // Adding candidates to the specific office that was created
         loop {
-            let candidate_name = get_input("\n\tPlease enter the name of the candidate: ");
-            let party = get_input("\n\tPlease enter the political party of the candidate: ");
+            let candidate_name = get_input("\nPlease enter the name of the candidate: ");
+            if candidate_name.to_lowercase() == "exit" {
+                println!("Candidate addition canceled. Returning to the admin menu.");
+                return Ballot { offices, is_open: false }; // Exit without saving
+            }
 
-            if let Err(err) = conn.execute(
+            let party = get_input("\nPlease enter the political party of the candidate: ");
+            if party.to_lowercase() == "exit" {
+                println!("Candidate addition canceled. Returning to the admin menu.");
+                return Ballot { offices, is_open: false }; // Exit without saving
+            }
+
+            if let Err(err) = transaction.execute(
                 "INSERT INTO candidates (name, party, office_id) VALUES (?1, ?2, (SELECT id FROM offices WHERE name = ?3))",
                 params![candidate_name, party, office_name],
             ) {
@@ -429,19 +452,23 @@ fn create_election(conn: &Connection) -> Ballot {
                 votes: 0,
             });
 
-            if get_input("\n\tAdd another candidate to the office (type 'yes' or 'no')?:  ").to_lowercase() != "yes" {
+            if get_input("\nAdd another candidate to the office (type 'yes' or 'no')?:  ").to_lowercase() != "yes" {
                 break;
             }
         }
+
         offices.push(Office {
             name: office_name.to_string(),
             candidates,
         });
 
-        if get_input("\n\tAdd another office to the ballot (type 'yes' or 'no')?:  ").to_lowercase() != "yes" {
+        if get_input("\nAdd another office to the ballot (type 'yes' or 'no')?:  ").to_lowercase() != "yes" {
             break;
         }
     }
+
+    // Commit the transaction only if all operations succeed
+    transaction.commit().expect("Failed to commit transaction.");
     Ballot { offices, is_open: true }
 }
 
@@ -606,7 +633,12 @@ fn get_input(prompt: &str) -> String {
 
 // Deleting a voter
 fn delete_voter(conn: &Connection) {
+    println!("\nType 'exit' at any time to cancel and return to the admin menu.");
     let voter_name = get_input("\n\tEnter the name of the voter to delete:");
+    if voter_name.to_lowercase() == "exit" {
+        println!("Deletion canceled. Returning to admin menu...");
+        return;
+    }
 
     match conn.execute(
         "DELETE FROM voters WHERE LOWER(name) = ?1",
@@ -625,11 +657,21 @@ fn delete_voter(conn: &Connection) {
 
 // Deleting a candidate
 fn delete_candidate(conn: &Connection) {
+    println!("\nType 'exit' at any time to cancel and return to the admin menu.");
     let candidate_name = get_input("\n\tEnter the name of the candidate to delete:");
+    if candidate_name.to_lowercase() == "exit" {
+        println!("Deletion canceled. Returning to admin menu...");
+        return;
+    }
+
     let office_name = get_input("\n\tEnter the office the candidate is running for:");
+    if office_name.to_lowercase() == "exit" {
+        println!("Deletion canceled. Returning to admin menu...");
+        return;
+    }
 
     match conn.execute(
-        "DELETE FROM candidates WHERE LOWER(name) = ?1 AND office_id = (SELECT id FROM offices WHERE  LOWER(name) = ?2)",
+        "DELETE FROM candidates WHERE LOWER(name) = ?1 AND office_id = (SELECT id FROM offices WHERE LOWER(name) = ?2)",
         params![candidate_name, office_name],
     ) {
         Ok(deleted) => {
@@ -645,7 +687,12 @@ fn delete_candidate(conn: &Connection) {
 
 // Deleting an office
 fn delete_office(conn: &Connection) {
+    println!("\nType 'exit' at any time to cancel and return to the admin menu.");
     let office_name = get_input("\n\tEnter the name of the office to delete:");
+    if office_name.to_lowercase() == "exit" {
+        println!("Deletion canceled. Returning to admin menu...");
+        return;
+    }
 
     // First, delete all candidates associated with this office
     match conn.execute(
