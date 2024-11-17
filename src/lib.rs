@@ -1,4 +1,4 @@
-pub mod db; // Make the db.rs file accessible
+pub mod db; // This line is to make the db.rs file accessible
 
 
 use rusqlite::Connection;

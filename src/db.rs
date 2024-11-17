@@ -1,4 +1,7 @@
-// src/db.rs
+
+
+// ================= This file manages the database, the creation of tables, the insertion and deletion of the data ======================
+
 use chrono::{Datelike, NaiveDate}; 
 use rusqlite::{params, Connection, Result};
 
